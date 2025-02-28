@@ -17,7 +17,7 @@ async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    application = Application.builder().token("YOUR_BOT_TOKEN").build()
+    application = Application.builder().token("8103926966:AAF0iuZA5uP_HRT6bKkuUzRemL8lHGqUdnw").build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("play", play))
     application.run_polling()
