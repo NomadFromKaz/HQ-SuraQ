@@ -1,0 +1,153 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from database import Session, User, Question, Advertisement, GameStat
+import logging
+import time
+
+# Setup
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+QUESTIONS_PER_GAME = 10
+
+class TriviaGame:
+    def __init__(self):
+        self.active_players = {}  # {user_id: {"score": 0, "current_q": 0, "ads_watched": 0}}
+
+    # Start command: /start
+    def start(self, update: Update, context: CallbackContext):
+        user = update.effective_user
+        update.message.reply_text(
+            f"Welcome to Trivia Game! Use /register to play.\n"
+            f"Играға қатысу үшін /register басыңыз."
+        )
+
+    # Registration: /register
+    def register(self, update: Update, context: CallbackContext):
+        user = update.effective_user
+        session = Session()
+        if not session.query(User).filter_by(user_id=user.id).first():
+            new_user = User(
+                user_id=user.id,
+                username=user.username,
+                full_name=user.full_name,
+                language='ru'  # Default language
+            )
+            session.add(new_user)
+            session.commit()
+            update.message.reply_text("Registration successful! Use /play to start.")
+        else:
+            update.message.reply_text("You are already registered!")
+        session.close()
+
+    # Start game: /play
+    def play(self, update: Update, context: CallbackContext):
+        user_id = update.effective_user.id
+        self.active_players[user_id] = {"score": 0, "current_q": 0, "ads_watched": 0}
+        self.ask_question(update, context, user_id)
+
+    # Ask a question
+    def ask_question(self, update: Update, context: CallbackContext, user_id: int):
+        session = Session()
+        q_num = self.active_players[user_id]["current_q"]
+        question = session.query(Question).offset(q_num).first()
+        
+        if not question:
+            update.message.reply_text("No questions available. Game ended!")
+            return
+
+        keyboard = [
+            [InlineKeyboardButton(question.option1, callback_data=f"ans_{q_num}_0")],
+            [InlineKeyboardButton(question.option2, callback_data=f"ans_{q_num}_1")],
+            [InlineKeyboardButton(question.option3, callback_data=f"ans_{q_num}_2")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(
+            chat_id=user_id,
+            text=f"Question {q_num + 1}: {question.question}",
+            reply_markup=reply_markup
+        )
+        session.close()
+
+    # Handle answers
+    def handle_answer(self, update: Update, context: CallbackContext):
+        query = update.callback_query
+        user_id = query.from_user.id
+        data = query.data.split("_")
+        q_num = int(data[1])
+        selected_ans = int(data[2])
+
+        session = Session()
+        question = session.query(Question).offset(q_num).first()
+        
+        if question.correct == selected_ans:
+            self.active_players[user_id]["score"] += 1
+            query.answer("Correct! ✅")
+        else:
+            query.answer("Wrong! ❌")
+            del self.active_players[user_id]
+            query.message.reply_text("Game Over! You answered incorrectly.")
+            return
+
+        # Check for ads after Q3, Q5, Q7
+        next_q = q_num + 1
+        if next_q in [3, 5, 7]:
+            self.show_ad(update, context, user_id)
+        
+        # Proceed to next question or end
+        if next_q < QUESTIONS_PER_GAME:
+            self.active_players[user_id]["current_q"] = next_q
+            self.ask_question(update, context, user_id)
+        else:
+            self.end_game(update, context, user_id)
+        session.close()
+
+    # Show unskippable ad (30 seconds)
+    def show_ad(self, update: Update, context: CallbackContext, user_id: int):
+        session = Session()
+        ad = session.query(Advertisement).first()  # Get first ad (mock)
+        context.bot.send_video(
+            chat_id=user_id,
+            video=ad.video_url,
+            caption=f"Advertisement: {ad.company_name}\nYou must watch this ad for 30 seconds."
+        )
+        # Simulate unskippable ad (block next question for 30s)
+        time.sleep(30)
+        self.active_players[user_id]["ads_watched"] += 1
+
+    # End game
+    def end_game(self, update: Update, context: CallbackContext, user_id: int):
+        score = self.active_players[user_id]["score"]
+        ads_watched = self.active_players[user_id]["ads_watched"]
+        
+        # Save stats
+        session = Session()
+        stat = GameStat(
+            user_id=user_id,
+            score=score,
+            ads_watched=ads_watched,
+            is_winner=(score == QUESTIONS_PER_GAME)
+        )
+        session.add(stat)
+        session.commit()
+        session.close()
+        
+        context.bot.send_message(
+            chat_id=user_id,
+            text=f"Game Over! Final Score: {score}/10. Ads Watched: {ads_watched}"
+        )
+        del self.active_players[user_id]
+
+def main():
+    updater = Updater("YOUR_TELEGRAM_BOT_TOKEN", use_context=True)
+    dp = updater.dispatcher
+    game = TriviaGame()
+
+    dp.add_handler(CommandHandler("start", game.start))
+    dp.add_handler(CommandHandler("register", game.register))
+    dp.add_handler(CommandHandler("play", game.play))
+    dp.add_handler(CallbackQueryHandler(game.handle_answer))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
