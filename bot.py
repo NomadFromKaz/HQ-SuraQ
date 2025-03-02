@@ -5,7 +5,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Welcome to Trivia Game! Use /play to start.")
 
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    web_app_url = "https://github.com/NomadFromKaz/HQ-SuraQ.git"  # Replace with your deployed URL
+    web_app_url = "https://nomadfromkaz.github.io/HQ-SuraQ"  # Replace with your deployed URL
     await update.message.reply_text(
         "Starting the game...",
         reply_markup={
